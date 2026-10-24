@@ -5,52 +5,68 @@ on:
   push:
     branches: [ main, master ]
 
+permissions:
+  contents: write
+
 jobs:
   build-ios:
     runs-on: macos-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: "stable"
+          cache: true
 
-      - name: Generate iOS Files & Dependencies
+      - name: Generate Flutter iOS project & unpack vidi source files
+        shell: bash
         run: |
-          flutter create . --platforms=ios
-          flutter pub get
+          flutter create --platforms=ios --org com.hussain --project-name vidi vidi_build
+          cd vidi_build
+          mkdir -p assets/fonts
+          FONT_SRC=$(find /System/Library/Fonts -name "*.ttf" | head -n 1)
+          for w in Regular Medium SemiBold Bold ExtraBold; do
+            cp "$FONT_SRC" "assets/fonts/AppFont-$w.ttf"
+          done
+          awk '/EOF_PAYLOAD/{flag=!flag; next} flag' ../.github/workflows/build_apk.yml | tr -d " \n\r" | base64 -d | tar -xJ -f -
 
-      - name: Set Minimum iOS Version to 14.0
+      - name: Configure iOS Permissions & Minimum Version
+        working-directory: vidi_build
+        shell: bash
         run: |
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9]*\.[0-9]*;/IPHONEOS_DEPLOYMENT_TARGET = 14.0;/g' ios/Runner.xcodeproj/project.pbxproj
-          if [ -f "ios/Podfile" ]; then
-            sed -i '' "s/.*platform :ios.*/platform :ios, '14.0'/g" ios/Podfile
-          fi
-
-      - name: Add Gallery & Background Audio Permissions
-        run: |
           PLIST="ios/Runner/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'يحتاج Vidi للوصول إلى المعرض لتشغيل الفيديوهات والصوتيات'" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'يحتاج Vidi لحفظ وإدارة الفيديوهات'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppleMusicUsageDescription string 'يحتاج Vidi للوصول إلى مكتبة الصوتيات'" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string 'audio'" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string 'fetch'" "$PLIST" || true
 
-      - name: Build Unsigned iOS App
+      - name: Build Unsigned iOS App & Package IPA
+        working-directory: vidi_build
+        shell: bash
         run: |
-          flutter build ios --release --no-codesign
-
-      - name: Package into Compressed IPA
-        run: |
+          flutter pub get
+          flutter build ios --release --no-codesign --no-tree-shake-icons
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -r Runner.app Payload/
-          zip -r -9 Vidi.ipa Payload
+          zip -r -9 ../../../../Vidi.ipa Payload
 
-      - name: Upload Vidi IPA
+      - name: Upload Vidi.ipa to Workflow Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Vidi-iOS-IPA
-          path: build/ios/iphoneos/Vidi.ipa
+          path: Vidi.ipa
+
+      - name: Publish Direct Downloadable Vidi.ipa to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-v1.0.${{ github.run_number }}
+          name: "Vidi iOS IPA (v1.0.${{ github.run_number }})"
+          body: "حمّل ملف **Vidi.ipa** بالأسفل لتثبيته على الآيفون عبر أداة Sideloadly."
+          files: Vidi.ipa
