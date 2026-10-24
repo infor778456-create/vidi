@@ -1,16 +1,13 @@
-name: Build Vidi iOS IPA
+name: Build Vidi Web App (PWA)
 
 on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
 
-permissions:
-  contents: write
-
 jobs:
-  build-ios:
-    runs-on: macos-latest
+  build-web:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -21,52 +18,22 @@ jobs:
           channel: "stable"
           cache: true
 
-      - name: Generate Flutter iOS project & unpack vidi source files
+      - name: Unpack Vidi Source Files & Build Web
         shell: bash
         run: |
-          flutter create --platforms=ios --org com.hussain --project-name vidi vidi_build
+          flutter create --platforms=web --org com.hussain --project-name vidi vidi_build
           cd vidi_build
           mkdir -p assets/fonts
-          FONT_SRC=$(find /System/Library/Fonts -name "*.ttf" | head -n 1)
+          FONT_SRC=$(find /usr/share/fonts -name "*.ttf" | head -n 1)
           for w in Regular Medium SemiBold Bold ExtraBold; do
             cp "$FONT_SRC" "assets/fonts/AppFont-$w.ttf"
           done
           awk '/EOF_PAYLOAD/{flag=!flag; next} flag' ../.github/workflows/build_apk.yml | tr -d " \n\r" | base64 -d | tar -xJ -f -
-
-      - name: Configure iOS Permissions & Minimum Version
-        working-directory: vidi_build
-        shell: bash
-        run: |
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9]*\.[0-9]*;/IPHONEOS_DEPLOYMENT_TARGET = 14.0;/g' ios/Runner.xcodeproj/project.pbxproj
-          PLIST="ios/Runner/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'يحتاج Vidi للوصول إلى المعرض لتشغيل الفيديوهات والصوتيات'" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'يحتاج Vidi لحفظ وإدارة الفيديوهات'" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSAppleMusicUsageDescription string 'يحتاج Vidi للوصول إلى مكتبة الصوتيات'" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string 'audio'" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string 'fetch'" "$PLIST" || true
-
-      - name: Build Unsigned iOS App & Package IPA
-        working-directory: vidi_build
-        shell: bash
-        run: |
           flutter pub get
-          flutter build ios --release --no-codesign --no-tree-shake-icons
-          cd build/ios/iphoneos
-          mkdir -p Payload
-          cp -r Runner.app Payload/
-          zip -r -9 ../../../../Vidi.ipa Payload
+          flutter build web --release --no-tree-shake-icons
 
-      - name: Upload Vidi.ipa to Workflow Artifacts
+      - name: Upload Web Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Vidi-iOS-IPA
-          path: Vidi.ipa
-
-      - name: Publish Direct Downloadable Vidi.ipa to GitHub Releases
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ios-v1.0.${{ github.run_number }}
-          name: "Vidi iOS IPA (v1.0.${{ github.run_number }})"
-          body: "حمّل ملف **Vidi.ipa** بالأسفل لتثبيته على الآيفون عبر أداة Sideloadly."
-          files: Vidi.ipa
+          name: vidi-web-release
+          path: vidi_build/build/web/*
