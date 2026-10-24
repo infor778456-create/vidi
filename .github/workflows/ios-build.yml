@@ -1,0 +1,56 @@
+name: Build Vidi iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Generate iOS Files & Dependencies
+        run: |
+          flutter create . --platforms=ios
+          flutter pub get
+
+      - name: Set Minimum iOS Version to 14.0
+        run: |
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9]*\.[0-9]*;/IPHONEOS_DEPLOYMENT_TARGET = 14.0;/g' ios/Runner.xcodeproj/project.pbxproj
+          if [ -f "ios/Podfile" ]; then
+            sed -i '' "s/.*platform :ios.*/platform :ios, '14.0'/g" ios/Podfile
+          fi
+
+      - name: Add Gallery & Background Audio Permissions
+        run: |
+          PLIST="ios/Runner/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'يحتاج Vidi للوصول إلى المعرض لتشغيل الفيديوهات والصوتيات'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'يحتاج Vidi لحفظ وإدارة الفيديوهات'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string 'audio'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string 'fetch'" "$PLIST" || true
+
+      - name: Build Unsigned iOS App
+        run: |
+          flutter build ios --release --no-codesign
+
+      - name: Package into Compressed IPA
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r -9 Vidi.ipa Payload
+
+      - name: Upload Vidi IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vidi-iOS-IPA
+          path: build/ios/iphoneos/Vidi.ipa
